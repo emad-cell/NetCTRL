@@ -1,7 +1,14 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+import enum
+
+from sqlalchemy import Column, Enum, Integer, String, Boolean, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime ,timezone
 from app.db.database import Base
+
+class UserRole(str, enum.Enum):
+    admin    = "admin"
+    operator = "operator"
+    viewer   = "viewer"
 
 class User(Base):
     __tablename__ = "users"
@@ -11,7 +18,8 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    role= Column(Enum(UserRole), default=UserRole.viewer, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     # One user can manage many devices
     devices = relationship("Device", back_populates="owner")
@@ -29,6 +37,6 @@ class Device(Base):
     password = Column(String, nullable=False)       # encrypted at rest
     secret = Column(String, nullable=True)          # encrypted at rest when provided
     owner_id = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
     owner = relationship("User", back_populates="devices")
