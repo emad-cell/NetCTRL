@@ -43,7 +43,7 @@ ROUTE_CODES = {
     "O": "OSPF",
     "D": "EIGRP",
     "B": "BGP",
-    "i": "ISIS",
+    "I": "ISIS",
     "L": "local",
 }
 

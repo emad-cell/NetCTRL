@@ -18,7 +18,7 @@ def _derive_fernet_key(secret_key: str) -> bytes:
 
 @lru_cache(maxsize=1)
 def get_fernet() -> Fernet:
-    configured_key = settings.FERNET_KEY or settings.ENCRYPTION_KEY
+    configured_key =  settings.ENCRYPTION_KEY
     key = configured_key.encode() if configured_key else _derive_fernet_key(settings.SECRET_KEY)
     return Fernet(key)
 
