@@ -3,33 +3,56 @@ from typing import List, Optional
 from app.schemas.network import Interface, Route, ArpEntry, InterfaceDetail, ConfigSection
 
 # ── Interface Brief Parser ─────────────────────────────────────────────────────
+# Strict named-group regex — handles variable spacing and all IOS status variants
+
+INTERFACE_BRIEF_PATTERN = re.compile(
+    r'^(?P<interface>\S+)\s+'
+    r'(?P<ip>(?:\d{1,3}\.){3}\d{1,3}|unassigned)\s+'
+    r'(?P<ok>YES|NO)\s+'
+    r'(?P<method>\S+)\s+'
+    r'(?P<status>up|down|administratively down|deleted)\s+'
+    r'(?P<protocol>up|down)',
+    re.IGNORECASE
+)
 
 def parse_interface_brief(output: str) -> List[Interface]:
     """
     Parses: show ip interface brief
-    Example line:
-    FastEthernet0/0   192.168.1.1   YES NVRAM  up   up
+    Uses strict named-group regex instead of heuristic splitting.
+    Handles all IOS status variants:
+      - up / down
+      - administratively down
+      - deleted
+    Logs a warning for any line that doesn't match instead of
+    silently skipping it.
     """
     interfaces = []
-    # Skip the header line and empty lines
-    lines = [l for l in output.splitlines() if l.strip() and not l.startswith("Interface")]
 
-    for line in lines:
-        # Split on 2+ spaces to handle variable spacing
-        parts = re.split(r'\s{2,}', line.strip())
-        if len(parts) < 6:
-            # Try single space split as fallback
-            parts = line.split()
+    for line in output.splitlines():
+        line = line.strip()
 
-        if len(parts) >= 6:
-            interfaces.append(Interface(
-                interface=parts[0],
-                ip=parts[1] if parts[1] != "unassigned" else None,
-                ok=parts[2],
-                method=parts[3],
-                status=parts[4],
-                protocol=parts[5],
-            ))
+        # Skip header and empty lines
+        if not line or line.startswith("Interface"):
+            continue
+
+        match = INTERFACE_BRIEF_PATTERN.match(line)
+        if not match:
+            # Log unmatched lines instead of silently ignoring them
+            # so we know immediately if IOS output format changes
+            import logging
+            logging.getLogger(__name__).warning(
+                "parse_interface_brief: unmatched line: %r", line
+            )
+            continue
+
+        interfaces.append(Interface(
+            interface=match.group("interface"),
+            ip=match.group("ip") if match.group("ip") != "unassigned" else None,
+            ok=match.group("ok"),
+            method=match.group("method"),
+            status=match.group("status").lower(),
+            protocol=match.group("protocol").lower(),
+        ))
 
     return interfaces
 

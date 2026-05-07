@@ -1,10 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html
-from app.db.database import Base, engine
-from app.routers import auth, config, devices
+from app.routers import auth, config, devices,audit 
 
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="NetCTRL API",
@@ -24,6 +22,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(devices.router)
 app.include_router(config.router)
+app.include_router(audit.router)
 
 # Manually serve ReDoc with a pinned CDN version — fixes the blank page issue
 @app.get("/redoc", include_in_schema=False)

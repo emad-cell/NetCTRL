@@ -73,4 +73,6 @@ class CommandRequest(BaseModel):
     @field_validator("command")
     @classmethod
     def command_must_be_show(cls, v):
-        if not v.strip().lower().sta
+        if not v.strip().lower().startswith("show"):
+            raise ValueError("Only 'show' commands are allowed")
+        return v.strip()

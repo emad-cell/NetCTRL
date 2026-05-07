@@ -2,12 +2,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from app.db.database import get_db
-from app.db.models import User
+from app.db.models import User, UserRole
 from app.schemas.auth import RegisterRequest, LoginRequest, TokenResponse, UserOut
 from app.core.security import hash_password, verify_password, create_access_token
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, AdminOnly
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+class UpdateRoleRequest(BaseModel):
+    role: UserRole
 
 @router.post("/register", response_model=UserOut, status_code=201)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
@@ -20,13 +24,14 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
         username=payload.username,
         email=payload.email,
         hashed_password=hash_password(payload.password),
+        role=UserRole.viewer,   # default role
     )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
 
-# ── Used by Swagger Authorize button (form data) ──────────
+# ── Swagger Authorize button (form data) ──────────────────
 @router.post("/login", response_model=TokenResponse)
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -38,7 +43,7 @@ def login(
     token = create_access_token({"sub": user.username})
     return {"access_token": token}
 
-# ── Used by Next.js frontend (JSON) ───────────────────────
+# ── Next.js frontend (JSON) ───────────────────────────────
 @router.post("/token", response_model=TokenResponse)
 def login_json(payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == payload.username).first()
@@ -50,3 +55,19 @@ def login_json(payload: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+# ── Admin only — change user role ─────────────────────────
+@router.patch("/users/{user_id}/role", response_model=UserOut)
+def update_role(
+    user_id: int,
+    payload: UpdateRoleRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(AdminOnly)   # Admin only
+):
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.role = payload.role
+    db.commit()
+    db.refresh(user)
+    return user

@@ -4,25 +4,32 @@ from app.db.database import get_db
 from app.db.models import Device, User
 from app.schemas.device import DeviceCreate, DeviceOut, CommandRequest
 from app.core.security import encrypt_secret
-from app.services.ssh import get_connection
+from app.services.ssh import ssh_connect
 from app.services import router_commands
-from app.dependencies import get_current_user
+from app.dependencies import AdminOnly, OperatorPlus, AnyRole
 from typing import Any
+
 router = APIRouter(prefix="/devices", tags=["Devices"])
 
-# ── CRUD ──────────────────────────────────────────────────
+def _get_device_or_404(device_id: int, user_id: Any, db: Session) -> Device:
+    device = db.query(Device).filter(
+        Device.id == device_id,
+        Device.owner_id == user_id
+    ).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return device
 
 @router.post("/", response_model=DeviceOut, status_code=201)
 def add_device(
     payload: DeviceCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AdminOnly)
 ):
     payload_data = payload.model_dump()
     payload_data["password"] = encrypt_secret(payload_data["password"])
     if payload_data.get("secret") is not None:
         payload_data["secret"] = encrypt_secret(payload_data["secret"])
-
     device = Device(**payload_data, owner_id=current_user.id)
     db.add(device)
     db.commit()
@@ -32,7 +39,7 @@ def add_device(
 @router.get("/", response_model=list[DeviceOut])
 def list_devices(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AnyRole)
 ):
     return db.query(Device).filter(Device.owner_id == current_user.id).all()
 
@@ -40,70 +47,59 @@ def list_devices(
 def delete_device(
     device_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AdminOnly)
 ):
-    device = db.query(Device).filter(Device.id == device_id, Device.owner_id == current_user.id).first()
+    device = db.query(Device).filter(
+        Device.id == device_id,
+        Device.owner_id == current_user.id
+    ).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     db.delete(device)
     db.commit()
 
-# ── SSH Commands ───────────────────────────────────────────
-
-def _get_device_or_404(device_id: int, user_id: Any, db: Session) -> Device:
-    device = db.query(Device).filter(Device.id == device_id, Device.owner_id == user_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-    return device
 @router.get("/{device_id}/interfaces", response_model=list)
 def get_interfaces(
     device_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AnyRole)
 ):
     device = _get_device_or_404(device_id, current_user.id, db)
-    conn = get_connection(device)
-    try:
+    with ssh_connect(device) as conn:
         data = router_commands.get_interfaces(conn)
-    # Returns a list of Interface objects, not raw text output.
-        return [i.model_dump() for i in data]
-    finally:
-        conn.disconnect()
+    return [i.model_dump() for i in data]
 
 @router.get("/{device_id}/routes", response_model=list)
 def get_routes(
     device_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AnyRole)
 ):
     device = _get_device_or_404(device_id, current_user.id, db)
-    conn = get_connection(device)
-    data = router_commands.get_routes(conn)
-    conn.disconnect()
+    with ssh_connect(device) as conn:
+        data = router_commands.get_routes(conn)
     return [r.model_dump() for r in data]
 
 @router.get("/{device_id}/arp", response_model=list)
 def get_arp(
     device_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AnyRole)
 ):
     device = _get_device_or_404(device_id, current_user.id, db)
-    conn = get_connection(device)
-    data = router_commands.get_arp(conn)
-    conn.disconnect()
+    with ssh_connect(device) as conn:
+        data = router_commands.get_arp(conn)
     return [a.model_dump() for a in data]
 
 @router.get("/{device_id}/config")
 def get_config(
     device_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AnyRole)
 ):
     device = _get_device_or_404(device_id, current_user.id, db)
-    conn = get_connection(device)
-    data = router_commands.get_config(conn)
-    conn.disconnect()
+    with ssh_connect(device) as conn:
+        data = router_commands.get_config(conn)
     return data.model_dump()
 
 @router.post("/{device_id}/command")
@@ -111,14 +107,12 @@ def run_command(
     device_id: int,
     payload: CommandRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(AnyRole)
 ):
     device = _get_device_or_404(device_id, current_user.id, db)
-    conn = get_connection(device)
     try:
-        output = router_commands.send_raw_command(conn, payload.command)
+        with ssh_connect(device) as conn:
+            output = router_commands.send_raw_command(conn, payload.command)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    finally:
-        conn.disconnect()
     return {"output": output}
